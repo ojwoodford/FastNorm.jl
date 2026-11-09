@@ -1,6 +1,6 @@
 name = "FastNorm"
 uuid = "9ae3a7d3-f420-46c0-9803-30469fdd2dd1"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Oliver Woodford"]
 
 [deps]

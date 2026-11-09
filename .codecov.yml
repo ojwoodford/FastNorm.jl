@@ -9,6 +9,9 @@ coverage:
         target: auto
         threshold: 5%
 
+ignore:
+  - "src/precompile.jl"
+
 comment:
   layout: "reach, diff, flags, files"
   behavior: default

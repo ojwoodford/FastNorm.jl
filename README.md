@@ -16,7 +16,7 @@ Standard Julia linear algebra is built around standard BLAS and LAPACK libraries
    `LinearAlgebra.norm` uses BLAS `dnrm2` (or `generic_norm2`), which executes defensive multi-pass scaling (e.g., Blue's algorithm) with extra conditional branches and scaling factors to protect against extreme underflow or overflow. When data magnitudes are well within normal IEEE-754 dynamic range, this defensive handling adds unnecessary latency. `fast_norm` and `sqnorm` compute norms directly in a single pass, delivering **up to 17x speedups** over `LinearAlgebra.norm`.
 
 3. **In-Place Unit-Norm Normalization (`norm1!!`)**:
-   Standard normalization to unit Euclidean norm (`vec ./= norm(vec)`) incurs the full multi-pass scaling overhead of BLAS `dnrm2` followed by elementwise array division. `norm1!!` uses single-pass SIMD `sqnorm` and normalizes the vector in-place (or returns a new static vector) using reciprocal multiplication. To prevent division by zero or NaN creation on degenerate vectors without artificially restricting floating-point dynamic range, `norm1!!` defaults to `minsqnorm = floatmin(T)` (the smallest positive normal number for type `T`), delivering **up to 7.7x speedups**.
+   Standard in-place normalization (`LinearAlgebra.normalize!`) delegates to BLAS `dnrm2` on vectors of size $\ge 32$ and does not protect against division by zero (producing `NaN`s for zero vectors). `norm1!!` uses single-pass SIMD `sqnorm` and normalizes the vector in-place (or returns a new static vector) using reciprocal multiplication. To prevent division by zero or NaN creation on degenerate vectors without artificially restricting floating-point dynamic range, `norm1!!` defaults to `minsqnorm = floatmin(T)` (the smallest positive normal number for type `T`), delivering **up to 6.9x speedups** over `LinearAlgebra.normalize!`.
 
 4. **Single-Pass Mean and Normalizer (`vecmeannorm`)**:
    Standard calculations of the mean $\bar{x}$ and norm of deviations $\sqrt{\sum_i (x_i - \bar{x})^2}$ require two sequential memory passes over the vector: pass 1 computes the mean, and pass 2 computes the squared differences from the mean. `vecmeannorm` computes both the mean and the normalization factor in a **single pass** using the algebraic identity:
@@ -30,7 +30,7 @@ Standard Julia linear algebra is built around standard BLAS and LAPACK libraries
    3. Compute Euclidean norm via BLAS (pass 3: read vector)
    4. Divide by norm (pass 4: write vector)
 
-   `mean0norm1!!` uses `vecmeannorm` to compute both the mean and the normalization factor in a single read pass, and then broadcasts the affine transformation $(v_i - \bar{x}) \cdot \text{scale}$ in a second pass. Memory is traversed only twice rather than four times. For mutable arrays (such as standard `Vector` or views), the operation modifies elements in-place with **zero allocations**; for immutable arrays (such as `StaticArrays.SVector`), a new normalized static vector is returned. Clamped with `floatmin(T)` by default, it delivers **up to 8.8x speedups** over standard multi-pass normalization pipelines.
+   `mean0norm1!!` uses `vecmeannorm` to compute both the mean and the normalization factor in a single read pass, and then applies the affine transformation $(v_i - \bar{x}) \cdot \text{scale}$ in a second pass. Memory is traversed only twice rather than four times. For mutable arrays (such as standard `Vector` or views), the operation modifies elements in-place with **zero allocations** using an inlined SIMD loop; for immutable arrays (such as `StaticArrays.SVector`), a new normalized static vector is returned. Clamped with `floatmin(T)` by default, it delivers **up to 9.0x speedups** over standard multi-pass normalization pipelines.
 
 ## Performance Evaluation
 
@@ -46,60 +46,119 @@ julia --project=. examples/speed_test.jl
 
 Results collected on an Apple Silicon (M-series) CPU:
 
+### Standard Dense Vectors (`Vector{Float64}`)
+
 #### 1. Euclidean Norm (`fast_norm` vs `LinearAlgebra.norm`)
 
 | Vector Size | Standard (`LinearAlgebra.norm`) | FastNorm (`fast_norm`) | Speedup | Time Reduction |
-|:-----------:|:-------------------------------:|:------------------------:|:-------:|:--------------:|
-| 4 | ~5.4 ns | ~1.9 ns | ~2.9x | ~65.2% |
-| 16 | ~12.7 ns | ~2.9 ns | ~4.4x | ~77.4% |
-| 64 | ~62.5 ns | ~5.3 ns | ~11.9x | ~91.6% |
-| 256 | ~275.4 ns | ~17.1 ns | ~16.1x | ~93.8% |
-| 1024 | ~1.26 μs | ~71.5 ns | ~17.6x | ~94.3% |
-| 4096 | ~5.13 μs | ~312.2 ns | ~16.4x | ~93.9% |
+|:-----------:|:-------------------------------:|:----------------------:|:-------:|:--------------:|
+| 4 | ~5.4 ns | ~1.9 ns | ~2.9x | ~65.9% |
+| 16 | ~13.3 ns | ~2.9 ns | ~4.6x | ~78.4% |
+| 64 | ~60.8 ns | ~5.7 ns | ~10.6x | ~90.5% |
+| 256 | ~275.5 ns | ~17.5 ns | ~15.7x | ~93.6% |
+| 1024 | ~1.24 μs | ~71.3 ns | ~17.3x | ~94.2% |
+| 4096 | ~5.08 μs | ~312.4 ns | ~16.3x | ~93.8% |
 
 #### 2. Squared Euclidean Norm (`sqnorm` vs `LinearAlgebra.dot(a, a)`)
 
 | Vector Size | Standard (`dot(a, a)`) | FastNorm (`sqnorm`) | Speedup | Time Reduction |
-|:-----------:|:----------------------:|:---------------------:|:-------:|:--------------:|
+|:-----------:|:----------------------:|:-------------------:|:-------:|:--------------:|
 | 4 | ~9.3 ns | ~1.9 ns | ~5.0x | ~80.0% |
-| 16 | ~13.1 ns | ~2.8 ns | ~4.7x | ~78.7% |
-| 64 | ~14.9 ns | ~9.0 ns | ~1.7x | ~40.0% |
-| 256 | ~39.0 ns | ~15.3 ns | ~2.6x | ~60.9% |
-| 1024 | ~138.3 ns | ~67.2 ns | ~2.1x | ~51.4% |
-| 4096 | ~542.2 ns | ~311.9 ns | ~1.7x | ~42.5% |
+| 16 | ~13.0 ns | ~2.8 ns | ~4.7x | ~78.6% |
+| 64 | ~14.6 ns | ~6.5 ns | ~2.3x | ~55.6% |
+| 256 | ~39.0 ns | ~16.0 ns | ~2.4x | ~59.0% |
+| 1024 | ~138.2 ns | ~67.0 ns | ~2.1x | ~51.5% |
+| 4096 | ~539.4 ns | ~312.5 ns | ~1.7x | ~42.1% |
 
-#### 3. Unit-Norm Normalization (`norm1!!` vs Standard `./= norm`)
+#### 3. Unit-Norm Normalization (`norm1!!` vs `LinearAlgebra.normalize!`)
 
-| Vector Size | Standard (`./= norm`) | FastNorm (`norm1!!`) | Speedup | Time Reduction |
-|:-----------:|:---------------------:|:----------------------:|:-------:|:--------------:|
-| 4 | ~14.7 ns | ~15.6 ns | ~0.9x | -5.5% |
-| 16 | ~27.2 ns | ~19.3 ns | ~1.4x | ~29.0% |
-| 64 | ~106.6 ns | ~23.1 ns | ~4.6x | ~78.3% |
-| 256 | ~378.4 ns | ~55.2 ns | ~6.9x | ~85.4% |
-| 1024 | ~1.45 μs | ~197.9 ns | ~7.3x | ~86.4% |
-| 4096 | ~5.76 μs | ~744.4 ns | ~7.7x | ~87.1% |
+| Vector Size | Standard (`normalize!`) | FastNorm (`norm1!!`) | Speedup | Time Reduction |
+|:-----------:|:-----------------------:|:--------------------:|:-------:|:--------------:|
+| 4 | ~7.2 ns | ~15.6 ns | ~0.5x | -117.2% |
+| 16 | ~27.6 ns | ~19.1 ns | ~1.4x | ~31.0% |
+| 64 | ~104.3 ns | ~23.1 ns | ~4.5x | ~77.8% |
+| 256 | ~283.7 ns | ~54.9 ns | ~5.2x | ~80.6% |
+| 1024 | ~1.26 μs | ~194.0 ns | ~6.5x | ~84.6% |
+| 4096 | ~5.12 μs | ~741.8 ns | ~6.9x | ~85.5% |
 
 #### 4. Mean and Normalizer (`vecmeannorm` vs Standard 2-Pass)
 
 | Vector Size | Standard (2-pass) | FastNorm (`vecmeannorm`) | Speedup | Time Reduction |
-|:-----------:|:-----------------:|:--------------------------:|:-------:|:--------------:|
-| 4 | ~4.7 ns | ~3.4 ns | ~1.4x | ~27.1% |
-| 16 | ~10.4 ns | ~4.4 ns | ~2.4x | ~57.9% |
-| 64 | ~20.8 ns | ~8.2 ns | ~2.5x | ~60.6% |
-| 256 | ~65.6 ns | ~25.8 ns | ~2.5x | ~60.6% |
-| 1024 | ~279.4 ns | ~84.9 ns | ~3.3x | ~69.6% |
-| 4096 | ~1.05 μs | ~324.1 ns | ~3.2x | ~69.2% |
+|:-----------:|:-----------------:|:------------------------:|:-------:|:--------------:|
+| 4 | ~4.7 ns | ~2.6 ns | ~1.8x | ~45.7% |
+| 16 | ~10.8 ns | ~4.7 ns | ~2.3x | ~56.9% |
+| 64 | ~20.9 ns | ~8.2 ns | ~2.5x | ~60.6% |
+| 256 | ~65.8 ns | ~25.4 ns | ~2.6x | ~61.4% |
+| 1024 | ~272.1 ns | ~86.2 ns | ~3.2x | ~68.3% |
+| 4096 | ~1.09 μs | ~344.6 ns | ~3.1x | ~68.2% |
 
 #### 5. Zero-Mean Unit-Norm Normalization (`mean0norm1!!` vs Standard Multi-Pass)
 
 | Vector Size | Standard (Multi-pass) | FastNorm (`mean0norm1!!`) | Speedup | Time Reduction |
 |:-----------:|:---------------------:|:---------------------------:|:-------:|:--------------:|
-| 4 | ~26.1 ns | ~24.9 ns | ~1.1x | ~4.8% |
-| 16 | ~47.9 ns | ~27.1 ns | ~1.8x | ~43.5% |
-| 64 | ~133.9 ns | ~32.0 ns | ~4.2x | ~76.1% |
-| 256 | ~442.2 ns | ~64.5 ns | ~6.9x | ~85.4% |
-| 1024 | ~1.69 μs | ~202.1 ns | ~8.3x | ~88.0% |
-| 4096 | ~6.59 μs | ~748.1 ns | ~8.8x | ~88.6% |
+| 4 | ~26.6 ns | ~20.2 ns | ~1.3x | ~24.0% |
+| 16 | ~47.9 ns | ~22.3 ns | ~2.1x | ~53.4% |
+| 64 | ~136.8 ns | ~27.8 ns | ~4.9x | ~79.7% |
+| 256 | ~455.3 ns | ~64.3 ns | ~7.1x | ~85.9% |
+| 1024 | ~1.69 μs | ~195.4 ns | ~8.6x | ~88.4% |
+| 4096 | ~6.66 μs | ~741.9 ns | ~9.0x | ~88.9% |
+
+### Static Vectors (`SVector{N, Float64}` up to length 32)
+
+#### 1. SVector Euclidean Norm (`fast_norm` vs `LinearAlgebra.norm`)
+
+| Vector Size | Standard (`LinearAlgebra.norm`) | FastNorm (`fast_norm`) | Speedup | Time Reduction |
+|:-----------:|:-------------------------------:|:----------------------:|:-------:|:--------------:|
+| 2 | ~2.8 ns | ~1.2 ns | ~2.3x | ~55.7% |
+| 3 | ~2.8 ns | ~1.2 ns | ~2.3x | ~55.6% |
+| 4 | ~2.8 ns | ~1.2 ns | ~2.3x | ~55.8% |
+| 8 | ~3.6 ns | ~2.1 ns | ~1.7x | ~42.1% |
+| 16 | ~5.8 ns | ~3.2 ns | ~1.8x | ~45.3% |
+| 32 | ~14.9 ns | ~7.4 ns | ~2.0x | ~50.0% |
+
+#### 2. SVector Squared Euclidean Norm (`sqnorm` vs `LinearAlgebra.dot(s, s)`)
+
+| Vector Size | Standard (`dot(s, s)`) | FastNorm (`sqnorm`) | Speedup | Time Reduction |
+|:-----------:|:----------------------:|:-------------------:|:-------:|:--------------:|
+| 2 | ~2.2 ns | ~1.2 ns | ~1.8x | ~42.9% |
+| 3 | ~2.2 ns | ~1.2 ns | ~1.8x | ~42.9% |
+| 4 | ~2.2 ns | ~1.2 ns | ~1.7x | ~42.8% |
+| 8 | ~3.2 ns | ~1.4 ns | ~2.3x | ~56.0% |
+| 16 | ~6.1 ns | ~2.9 ns | ~2.1x | ~52.1% |
+| 32 | ~12.0 ns | ~6.0 ns | ~2.0x | ~50.0% |
+
+#### 3. SVector Unit-Norm Normalization (`norm1!!` vs `LinearAlgebra.normalize`)
+
+| Vector Size | Standard (`LinearAlgebra.normalize`) | FastNorm (`norm1!!`) | Speedup | Time Reduction |
+|:-----------:|:------------------------------------:|:--------------------:|:-------:|:--------------:|
+| 2 | ~2.8 ns | ~2.2 ns | ~1.3x | ~20.1% |
+| 3 | ~2.8 ns | ~2.9 ns | ~1.0x | -2.1% |
+| 4 | ~2.8 ns | ~2.9 ns | ~1.0x | -0.4% |
+| 8 | ~4.4 ns | ~4.3 ns | ~1.0x | ~1.5% |
+| 16 | ~8.7 ns | ~7.8 ns | ~1.1x | ~10.4% |
+| 32 | ~25.0 ns | ~18.4 ns | ~1.4x | ~26.1% |
+
+#### 4. SVector Mean and Normalizer (`vecmeannorm` vs Standard 2-Pass)
+
+| Vector Size | Standard (2-pass) | FastNorm (`vecmeannorm`) | Speedup | Time Reduction |
+|:-----------:|:-----------------:|:------------------------:|:-------:|:--------------:|
+| 2 | ~1.2 ns | ~2.5 ns | ~0.5x | -100.0% |
+| 3 | ~1.2 ns | ~2.6 ns | ~0.5x | -111.2% |
+| 4 | ~1.2 ns | ~3.7 ns | ~0.3x | -200.1% |
+| 8 | ~4.5 ns | ~3.6 ns | ~1.3x | ~20.3% |
+| 16 | ~10.3 ns | ~6.4 ns | ~1.6x | ~37.8% |
+| 32 | ~29.9 ns | ~10.8 ns | ~2.8x | ~64.1% |
+
+#### 5. SVector Zero-Mean Unit-Norm Normalization (`mean0norm1!!` vs Standard Multi-Pass)
+
+| Vector Size | Standard (Multi-pass) | FastNorm (`mean0norm1!!`) | Speedup | Time Reduction |
+|:-----------:|:---------------------:|:---------------------------:|:-------:|:--------------:|
+| 2 | ~2.8 ns | ~2.5 ns | ~1.1x | ~11.7% |
+| 3 | ~4.3 ns | ~3.0 ns | ~1.5x | ~31.5% |
+| 4 | ~4.2 ns | ~2.9 ns | ~1.5x | ~31.1% |
+| 8 | ~9.1 ns | ~4.5 ns | ~2.0x | ~50.7% |
+| 16 | ~25.5 ns | ~8.0 ns | ~3.2x | ~68.7% |
+| 32 | ~69.9 ns | ~19.9 ns | ~3.5x | ~71.5% |
 
 ## Externally Available Methods
 

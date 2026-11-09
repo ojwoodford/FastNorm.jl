@@ -2,6 +2,7 @@
 using FastNorm
 using LinearAlgebra
 using Random
+using StaticArrays
 
 """
     bench_call(f::F, iters::Int, trials::Int=5) where F
@@ -24,6 +25,8 @@ returning the minimum time per call in nanoseconds.
     return best
 end
 
+@noinline read_elem(arr) = arr[1]
+
 function format_time(t_ns::Float64)
     if t_ns < 1000
         return string(round(t_ns, digits=2), " ns")
@@ -32,12 +35,6 @@ function format_time(t_ns::Float64)
     else
         return string(round(t_ns / 1_000_000, digits=2), " ms")
     end
-end
-
-function standard_norm1!(vec::AbstractVector{T}) where T
-    n = norm(vec)
-    vec ./= max(n, floatmin(T))
-    return vec
 end
 
 function standard_vecmeannorm(vec::AbstractVector{T}) where T
@@ -58,6 +55,20 @@ function standard_mean0norm1!(vec::AbstractVector{T}) where T
     return vec
 end
 
+function standard_svecmeannorm(s::SVector{N, T}) where {N, T}
+    m = sum(s) / N
+    ss = sum((s .- m).^2)
+    n = T(1) / sqrt(max(ss, floatmin(T)))
+    return (m, n)
+end
+
+function standard_smean0norm1(s::SVector{N, T}) where {N, T}
+    m = sum(s) / N
+    centered = s .- m
+    n = norm(centered)
+    return centered ./ max(n, floatmin(T))
+end
+
 """
     run_speed_test(trials=5)
 
@@ -72,12 +83,14 @@ function run_speed_test(trials::Int=5)
     println("Trials per test: $trials (taking minimum time per call)")
     println("=" ^ 88)
 
+    # =========================================================================
+    # Part 1: Standard Vectors (Vector{Float64})
+    # =========================================================================
+    println("\n## Standard Dense Vectors (`Vector{Float64}`)\n")
     sizes = [4, 16, 64, 256, 1024, 4096]
 
-    # -------------------------------------------------------------------------
     # 1. Euclidean Norm: fast_norm vs LinearAlgebra.norm
-    # -------------------------------------------------------------------------
-    println("\n### 1. Euclidean Norm: `fast_norm` vs `LinearAlgebra.norm`\n")
+    println("### 1. Euclidean Norm: `fast_norm` vs `LinearAlgebra.norm`\n")
     println("| Vector Size | Standard (`LinearAlgebra.norm`) | FastNorm (`fast_norm`) | Speedup | Time Reduction |")
     println("|:-----------:|:-------------------------------:|:----------------------:|:-------:|:--------------:|")
 
@@ -96,9 +109,7 @@ function run_speed_test(trials::Int=5)
         println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
     end
 
-    # -------------------------------------------------------------------------
     # 2. Squared Euclidean Norm: sqnorm vs LinearAlgebra.dot(a, a)
-    # -------------------------------------------------------------------------
     println("\n### 2. Squared Euclidean Norm: `sqnorm` vs `LinearAlgebra.dot(a, a)`\n")
     println("| Vector Size | Standard (`dot(a, a)`) | FastNorm (`sqnorm`) | Speedup | Time Reduction |")
     println("|:-----------:|:----------------------:|:-------------------:|:-------:|:--------------:|")
@@ -118,12 +129,10 @@ function run_speed_test(trials::Int=5)
         println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
     end
 
-    # -------------------------------------------------------------------------
-    # 3. Unit-Norm Normalization: norm1!! vs standard_norm1!
-    # -------------------------------------------------------------------------
-    println("\n### 3. Unit-Norm Normalization: `norm1!!` vs Standard (`./= norm`)\n")
-    println("| Vector Size | Standard (`./= norm`) | FastNorm (`norm1!!`) | Speedup | Time Reduction |")
-    println("|:-----------:|:---------------------:|:--------------------:|:-------:|:--------------:|")
+    # 3. Unit-Norm Normalization: norm1!! vs LinearAlgebra.normalize!
+    println("\n### 3. Unit-Norm Normalization: `norm1!!` vs `LinearAlgebra.normalize!`\n")
+    println("| Vector Size | Standard (`normalize!`) | FastNorm (`norm1!!`) | Speedup | Time Reduction |")
+    println("|:-----------:|:-----------------------:|:--------------------:|:-------:|:--------------:|")
 
     for n in sizes
         a = randn(n)
@@ -133,11 +142,11 @@ function run_speed_test(trials::Int=5)
         buf_fast = copy(a)
 
         # Verification
-        standard_norm1!(buf_std)
+        normalize!(buf_std)
         norm1!!(buf_fast)
         @assert isapprox(buf_fast, buf_std, atol=1e-10)
 
-        t_std = bench_call(() -> standard_norm1!(buf_std), iters, trials)
+        t_std = bench_call(() -> normalize!(buf_std), iters, trials)
         t_fast = bench_call(() -> norm1!!(buf_fast), iters, trials)
 
         speedup = t_std / t_fast
@@ -145,9 +154,7 @@ function run_speed_test(trials::Int=5)
         println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
     end
 
-    # -------------------------------------------------------------------------
-    # 4. Vector Mean and Normalizer: vecmeannorm vs 2-Pass Standard
-    # -------------------------------------------------------------------------
+    # 4. Mean and Normalizer: vecmeannorm vs Standard 2-Pass
     println("\n### 4. Mean and Normalizer: `vecmeannorm` vs Standard 2-Pass\n")
     println("| Vector Size | Standard (2-pass) | FastNorm (`vecmeannorm`) | Speedup | Time Reduction |")
     println("|:-----------:|:-----------------:|:------------------------:|:-------:|:--------------:|")
@@ -157,10 +164,10 @@ function run_speed_test(trials::Int=5)
         iters = max(1000, 500_000 ÷ n)
 
         # Verification
-        m_std, norm_std = standard_vecmeannorm(a)
-        m_fast, norm_fast = vecmeannorm(a)
-        @assert isapprox(m_fast, m_std, atol=1e-10)
-        @assert isapprox(norm_fast, norm_std, atol=1e-10)
+        m_fast, inv_norm_fast = vecmeannorm(a)
+        m_std, inv_norm_std = standard_vecmeannorm(a)
+        @assert m_fast ≈ m_std
+        @assert inv_norm_fast ≈ inv_norm_std
 
         t_std = bench_call(() -> standard_vecmeannorm(a), iters, trials)
         t_fast = bench_call(() -> vecmeannorm(a), iters, trials)
@@ -170,9 +177,7 @@ function run_speed_test(trials::Int=5)
         println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
     end
 
-    # -------------------------------------------------------------------------
     # 5. In-Place Zero-Mean Unit-Norm Normalization: mean0norm1!! vs Standard
-    # -------------------------------------------------------------------------
     println("\n### 5. Zero-Mean Unit-Norm: `mean0norm1!!` vs Standard Multi-Pass\n")
     println("| Vector Size | Standard (Multi-pass) | FastNorm (`mean0norm1!!`) | Speedup | Time Reduction |")
     println("|:-----------:|:---------------------:|:---------------------------:|:-------:|:--------------:|")
@@ -191,6 +196,116 @@ function run_speed_test(trials::Int=5)
 
         t_std = bench_call(() -> standard_mean0norm1!(buf_std), iters, trials)
         t_fast = bench_call(() -> mean0norm1!!(buf_fast), iters, trials)
+
+        speedup = t_std / t_fast
+        reduction = (1.0 - t_fast / t_std) * 100.0
+        println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
+    end
+
+    # =========================================================================
+    # Part 2: Static Vectors (SVector{N, Float64} up to length 32)
+    # =========================================================================
+    println("\n## Static Vectors (`SVector{N, Float64}` up to length 32)\n")
+    svec_sizes = [2, 3, 4, 8, 16, 32]
+    svec_iters = 200_000
+
+    # 1. SVector Euclidean Norm: fast_norm vs LinearAlgebra.norm
+    println("### 1. SVector Euclidean Norm: `fast_norm` vs `LinearAlgebra.norm`\n")
+    println("| Vector Size | Standard (`LinearAlgebra.norm`) | FastNorm (`fast_norm`) | Speedup | Time Reduction |")
+    println("|:-----------:|:-------------------------------:|:----------------------:|:-------:|:--------------:|")
+
+    for n in svec_sizes
+        s = SVector{n, Float64}(randn(n)...)
+        box = [s]
+
+        # Verification
+        @assert fast_norm(s) ≈ norm(s)
+
+        t_std = bench_call(() -> norm(read_elem(box)), svec_iters, trials)
+        t_fast = bench_call(() -> fast_norm(read_elem(box)), svec_iters, trials)
+
+        speedup = t_std / t_fast
+        reduction = (1.0 - t_fast / t_std) * 100.0
+        println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
+    end
+
+    # 2. SVector Squared Euclidean Norm: sqnorm vs LinearAlgebra.dot
+    println("\n### 2. SVector Squared Norm: `sqnorm` vs `LinearAlgebra.dot(s, s)`\n")
+    println("| Vector Size | Standard (`dot(s, s)`) | FastNorm (`sqnorm`) | Speedup | Time Reduction |")
+    println("|:-----------:|:----------------------:|:-------------------:|:-------:|:--------------:|")
+
+    for n in svec_sizes
+        s = SVector{n, Float64}(randn(n)...)
+        box = [s]
+
+        # Verification
+        @assert sqnorm(s) ≈ dot(s, s)
+
+        t_std = bench_call(() -> dot(read_elem(box), read_elem(box)), svec_iters, trials)
+        t_fast = bench_call(() -> sqnorm(read_elem(box)), svec_iters, trials)
+
+        speedup = t_std / t_fast
+        reduction = (1.0 - t_fast / t_std) * 100.0
+        println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
+    end
+
+    # 3. SVector Unit-Norm Normalization: norm1!! vs LinearAlgebra.normalize
+    println("\n### 3. SVector Unit-Norm Normalization: `norm1!!` vs `LinearAlgebra.normalize`\n")
+    println("| Vector Size | Standard (`LinearAlgebra.normalize`) | FastNorm (`norm1!!`) | Speedup | Time Reduction |")
+    println("|:-----------:|:------------------------------------:|:--------------------:|:-------:|:--------------:|")
+
+    for n in svec_sizes
+        s = SVector{n, Float64}(randn(n)...)
+        box = [s]
+
+        # Verification
+        @assert norm1!!(s) ≈ normalize(s)
+
+        t_std = bench_call(() -> normalize(read_elem(box)), svec_iters, trials)
+        t_fast = bench_call(() -> norm1!!(read_elem(box)), svec_iters, trials)
+
+        speedup = t_std / t_fast
+        reduction = (1.0 - t_fast / t_std) * 100.0
+        println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
+    end
+
+    # 4. SVector Mean and Normalizer: vecmeannorm vs Standard 2-Pass
+    println("\n### 4. SVector Mean and Normalizer: `vecmeannorm` vs Standard 2-Pass\n")
+    println("| Vector Size | Standard (2-pass) | FastNorm (`vecmeannorm`) | Speedup | Time Reduction |")
+    println("|:-----------:|:-----------------:|:------------------------:|:-------:|:--------------:|")
+
+    for n in svec_sizes
+        s = SVector{n, Float64}(randn(n)...)
+        box = [s]
+
+        # Verification
+        m_fast, inv_norm_fast = vecmeannorm(s)
+        m_std, inv_norm_std = standard_svecmeannorm(s)
+        @assert m_fast ≈ m_std
+        @assert inv_norm_fast ≈ inv_norm_std
+
+        t_std = bench_call(() -> standard_svecmeannorm(read_elem(box)), svec_iters, trials)
+        t_fast = bench_call(() -> vecmeannorm(read_elem(box)), svec_iters, trials)
+
+        speedup = t_std / t_fast
+        reduction = (1.0 - t_fast / t_std) * 100.0
+        println("| $n | $(format_time(t_std)) | $(format_time(t_fast)) | $(round(speedup, digits=1))x | $(round(reduction, digits=1))% |")
+    end
+
+    # 5. SVector Zero-Mean Unit-Norm Normalization: mean0norm1!! vs Standard Multi-Pass
+    println("\n### 5. SVector Zero-Mean Unit-Norm: `mean0norm1!!` vs Standard Multi-Pass\n")
+    println("| Vector Size | Standard (Multi-pass) | FastNorm (`mean0norm1!!`) | Speedup | Time Reduction |")
+    println("|:-----------:|:---------------------:|:---------------------------:|:-------:|:--------------:|")
+
+    for n in svec_sizes
+        s = SVector{n, Float64}(randn(n)...)
+        box = [s]
+
+        # Verification
+        @assert mean0norm1!!(s) ≈ standard_smean0norm1(s)
+
+        t_std = bench_call(() -> standard_smean0norm1(read_elem(box)), svec_iters, trials)
+        t_fast = bench_call(() -> mean0norm1!!(read_elem(box)), svec_iters, trials)
 
         speedup = t_std / t_fast
         reduction = (1.0 - t_fast / t_std) * 100.0
