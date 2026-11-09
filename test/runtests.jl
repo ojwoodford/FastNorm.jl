@@ -87,6 +87,41 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
             c_pos = norm1!!(copy(c), 1e-6)
             @test isapprox(c_kw, c_pos, atol=tol)
             @test isapprox(norm(c_kw), one(T), atol=tol)
+
+            # Immutable AbstractVector (non-StaticVector)
+            r = T(1):T(1):T(16)
+            expected_r = r ./ norm(r)
+            res_r = norm1!!(r)
+            @test isapprox(res_r, expected_r, atol=tol, rtol=tol)
+            @test isapprox(norm(res_r), one(T), atol=tol)
+            res_r_kw = norm1!!(r; minsqnorm=1e-6)
+            res_r_pos = norm1!!(r, 1e-6)
+            @test isapprox(res_r_kw, res_r_pos, atol=tol)
+
+            lr = LinRange(T(1), T(10), 16)
+            expected_lr = lr ./ norm(lr)
+            res_lr = norm1!!(lr)
+            @test isapprox(res_lr, expected_lr, atol=tol, rtol=tol)
+            @test isapprox(norm(res_lr), one(T), atol=tol)
+
+            # SubArray of immutable vector
+            v_imm = view(r, 1:8)
+            expected_v_imm = v_imm ./ norm(v_imm)
+            res_v_imm = norm1!!(v_imm)
+            @test isapprox(res_v_imm, expected_v_imm, atol=tol, rtol=tol)
+            @test isapprox(norm(res_v_imm), one(T), atol=tol)
+
+            v_lr = view(lr, 1:8)
+            expected_v_lr = v_lr ./ norm(v_lr)
+            res_v_lr = norm1!!(v_lr)
+            @test isapprox(res_v_lr, expected_v_lr, atol=tol, rtol=tol)
+            @test isapprox(norm(res_v_lr), one(T), atol=tol)
+
+            # Zero immutable vector
+            z_imm = LinRange(zero(T), zero(T), 16)
+            z_imm_norm = norm1!!(z_imm)
+            @test all(z_imm_norm .== zero(T))
+            @test !any(isnan, z_imm_norm)
         end
     end
 
@@ -203,6 +238,47 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
             # Positional minsqnorm
             c_norm_pos = mean0norm1!!(copy(c), 1e-8)
             @test all(isapprox.(c_norm_pos, zero(T), atol=tol))
+
+            # Immutable AbstractVector (non-StaticVector)
+            r = T(1):T(1):T(16)
+            expected_r = ref_normalize(r)
+            res_r = mean0norm1!!(r)
+            @test isapprox(res_r, expected_r, atol=tol, rtol=tol)
+            @test isapprox(sum(res_r), zero(T), atol=16 * eps(T) * 100)
+            @test isapprox(norm(res_r), one(T), atol=tol)
+
+            lr = LinRange(T(1), T(10), 16)
+            expected_lr = ref_normalize(lr)
+            res_lr = mean0norm1!!(lr)
+            @test isapprox(res_lr, expected_lr, atol=tol, rtol=tol)
+            @test isapprox(sum(res_lr), zero(T), atol=16 * eps(T) * 100)
+            @test isapprox(norm(res_lr), one(T), atol=tol)
+
+            # SubArray of immutable vector
+            v_imm = view(r, 1:8)
+            expected_v_imm = ref_normalize(v_imm)
+            res_v_imm = mean0norm1!!(v_imm)
+            @test isapprox(res_v_imm, expected_v_imm, atol=tol, rtol=tol)
+            @test isapprox(sum(res_v_imm), zero(T), atol=8 * eps(T) * 100)
+            @test isapprox(norm(res_v_imm), one(T), atol=tol)
+
+            v_lr = view(lr, 1:8)
+            expected_v_lr = ref_normalize(v_lr)
+            res_v_lr = mean0norm1!!(v_lr)
+            @test isapprox(res_v_lr, expected_v_lr, atol=tol, rtol=tol)
+            @test isapprox(sum(res_v_lr), zero(T), atol=8 * eps(T) * 100)
+            @test isapprox(norm(res_v_lr), one(T), atol=tol)
+
+            # Constant immutable vector
+            c_imm = LinRange(T(7.0), T(7.0), 16)
+            c_imm_norm = mean0norm1!!(c_imm)
+            @test all(isapprox.(c_imm_norm, zero(T), atol=tol))
+            @test !any(isnan, c_imm_norm)
+
+            c_imm_kw = mean0norm1!!(c_imm; minsqnorm=1e-8)
+            @test all(isapprox.(c_imm_kw, zero(T), atol=tol))
+            c_imm_pos = mean0norm1!!(c_imm, 1e-8)
+            @test all(isapprox.(c_imm_pos, zero(T), atol=tol))
         end
     end
 
@@ -221,26 +297,32 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
             s_n = norm1!!(s)
             @test s_n isa SVector{len, Float64}
             @test norm(s_n) ≈ 1.0
+            @test isapprox(norm1!!(s, 1e-6), norm1!!(s; minsqnorm=1e-6), atol=1e-11)
             m_n = norm1!!(m)
             @test m_n === m
             @test norm(m) ≈ 1.0
+            m_copy = copy(m)
+            @test isapprox(norm1!!(m_copy, 1e-6), norm1!!(copy(m); minsqnorm=1e-6), atol=1e-11)
 
             # vecmeannorm
             m_s, n_s = vecmeannorm(s)
             @test m_s ≈ sum(s) / len
             @test n_s ≈ 1.0 / norm(s .- m_s)
+            @test isapprox(vecmeannorm(s, 1e-6)[2], vecmeannorm(s; minsqnorm=1e-6)[2], atol=1e-11)
 
             # mean0norm1!!
             s_m0 = mean0norm1!!(s)
             @test s_m0 isa SVector{len, Float64}
             @test isapprox(sum(s_m0), 0.0, atol=1e-10)
             @test norm(s_m0) ≈ 1.0
+            @test isapprox(mean0norm1!!(s, 1e-6), mean0norm1!!(s; minsqnorm=1e-6), atol=1e-11)
 
             m2 = MVector{len, Float64}(s)
             m_m0 = mean0norm1!!(m2)
             @test m_m0 === m2
             @test isapprox(sum(m2), 0.0, atol=1e-10)
             @test norm(m2) ≈ 1.0
+            @test isapprox(mean0norm1!!(copy(m2), 1e-6), mean0norm1!!(copy(m2); minsqnorm=1e-6), atol=1e-11)
         end
     end
 end
