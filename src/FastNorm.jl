@@ -100,9 +100,10 @@ roots, and garbage output for constant or near-constant vectors (these normalize
 than to noise amplified by `1 / sqrt(floatmin(T))`).
 Accuracy degrades as `std(vec) / abs(mean(vec))` approaches `sqrt(eps(T))`; for such low-contrast
 data, subtract a representative value (e.g. `vec[1]`) first or use a two-pass method.
-Returns `(vecmean, vecnorm)`.
+Returns `(vecmean, vecnorm)`. An empty vector gives `(zero(T), one(T))`.
 """
 @inline function vecmeannorm(vec::AbstractVector{T}, minsqnorm::Real) where {T<:AbstractFloat}
+    isempty(vec) && return (zero(T), one(T))
     x = zero(T)
     xx = zero(T)
     @turbo for i in eachindex(vec)
@@ -117,6 +118,7 @@ end
 @inline vecmeannorm(vec::AbstractVector{T}; minsqnorm::Real=floatmin(T)) where {T<:AbstractFloat} = vecmeannorm(vec, minsqnorm)
 
 @inline function vecmeannorm(vec::StaticVector{N, T}, minsqnorm::Real) where {N, T<:AbstractFloat}
+    N == 0 && return (zero(T), one(T))
     x = zero(T)
     xx = zero(T)
     @fastmath @inbounds for i in 1:N

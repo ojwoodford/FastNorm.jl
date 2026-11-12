@@ -343,6 +343,16 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
         end
     end
 
+    @testset "empty input" begin
+        for T in (Float64, Float32)
+            @test vecmeannorm(T[]) === (zero(T), one(T))
+            @test vecmeannorm(SVector{0, T}()) === (zero(T), one(T))
+            @test isempty(mean0norm1!!(T[]))
+            @test isempty(norm1!!(T[]))
+            @test isempty(mean0norm1!!(SVector{0, T}()))
+        end
+    end
+
     @testset "integer input" begin
         @test sqnorm([1, 2, 3]) == 14
         @test fast_norm([3, 4]) == 5.0
