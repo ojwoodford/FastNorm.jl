@@ -20,7 +20,7 @@ to `sum(abs2, arr)`.
 """
 @inline sqnorm(x::Number) = abs2(x)
 @inline sqnorm(arr::AbstractArray{<:Complex}) = sum(abs2, arr)
-@inline function sqnorm(vec::AbstractVector{<:Real})
+function sqnorm(vec::AbstractVector{<:Real})
     total = zero(eltype(vec))
     @turbo for i in eachindex(vec)
         total += vec[i] * vec[i]
@@ -31,7 +31,7 @@ end
 @inline sqnorm(arr::DenseArray{<:Real, N}) where N = N == 1 ? invoke(sqnorm, Tuple{AbstractVector{<:Real}}, arr) : sqnorm(vec(arr))
 @inline sqnorm(arr::AbstractArray{<:Real}) = sum(abs2, arr)
 
-@inline function sqnorm(vec::StaticVector{N, T}) where {N, T}
+function sqnorm(vec::StaticVector{N, T}) where {N, T}
     s = zero(T)
     @fastmath @inbounds for i in 1:N
         s += abs2(vec[i])
@@ -70,7 +70,7 @@ normalized vector is returned.
     `1e19` for `Float32`). Above this range squared sums overflow to `Inf` (so `norm1!!` returns zeros); below it they
     underflow to zero and are clamped to `minsqnorm`. Use `LinearAlgebra.norm` for data that may be out of range.
 """
-@inline function norm1!!(vec::V, minsqnorm::Real) where {T<:AbstractFloat, V<:AbstractVector{T}}
+function norm1!!(vec::V, minsqnorm::Real) where {T<:AbstractFloat, V<:AbstractVector{T}}
     vecnorm = @fastmath T(1) / sqrt(max(sqnorm(vec), T(minsqnorm)))
     if _ismutable(V)
         @inbounds @simd for i in eachindex(vec)
@@ -83,7 +83,7 @@ normalized vector is returned.
 end
 @inline norm1!!(vec::AbstractVector{T}; minsqnorm::Real=floatmin(T)) where {T<:AbstractFloat} = norm1!!(vec, minsqnorm)
 
-@inline function norm1!!(vec::StaticVector{N, T}, minsqnorm::Real) where {N, T<:AbstractFloat}
+function norm1!!(vec::StaticVector{N, T}, minsqnorm::Real) where {N, T<:AbstractFloat}
     vecnorm = @fastmath T(1) / sqrt(max(sqnorm(vec), T(minsqnorm)))
     if _ismutable(typeof(vec))
         @inbounds @simd for i in 1:N
@@ -119,7 +119,7 @@ Returns `(vecmean, vecnorm)`. An empty vector gives `(zero(T), one(T))`.
     `1e19` for `Float32`). Above this range squared sums overflow to `Inf` (so the returned normalization factor is zero); below it they
     underflow to zero and are clamped to the noise floor. Use `LinearAlgebra.norm` for data that may be out of range.
 """
-@inline function vecmeannorm(vec::AbstractVector{T}, minsqnorm::Real) where {T<:AbstractFloat}
+function vecmeannorm(vec::AbstractVector{T}, minsqnorm::Real) where {T<:AbstractFloat}
     isempty(vec) && return (zero(T), one(T))
     x = zero(T)
     xx = zero(T)
@@ -134,7 +134,7 @@ Returns `(vecmean, vecnorm)`. An empty vector gives `(zero(T), one(T))`.
 end
 @inline vecmeannorm(vec::AbstractVector{T}; minsqnorm::Real=floatmin(T)) where {T<:AbstractFloat} = vecmeannorm(vec, minsqnorm)
 
-@inline function vecmeannorm(vec::StaticVector{N, T}, minsqnorm::Real) where {N, T<:AbstractFloat}
+function vecmeannorm(vec::StaticVector{N, T}, minsqnorm::Real) where {N, T<:AbstractFloat}
     N == 0 && return (zero(T), one(T))
     x = zero(T)
     xx = zero(T)
@@ -166,7 +166,7 @@ normalized vector is returned.
     `1e19` for `Float32`). Above this range squared sums overflow to `Inf` (so `mean0norm1!!` returns zeros); below it they
     underflow to zero and are clamped to the noise floor. Use `LinearAlgebra.norm` for data that may be out of range.
 """
-@inline function mean0norm1!!(vec::V, minsqnorm::Real) where {T<:AbstractFloat, V<:AbstractVector{T}}
+function mean0norm1!!(vec::V, minsqnorm::Real) where {T<:AbstractFloat, V<:AbstractVector{T}}
     vecmean, vecnorm = vecmeannorm(vec, minsqnorm)
     if _ismutable(V)
         @inbounds @simd for i in eachindex(vec)
@@ -179,7 +179,7 @@ normalized vector is returned.
 end
 @inline mean0norm1!!(vec::AbstractVector{T}; minsqnorm::Real=floatmin(T)) where {T<:AbstractFloat} = mean0norm1!!(vec, minsqnorm)
 
-@inline function mean0norm1!!(vec::StaticVector{N, T}, minsqnorm::Real) where {N, T<:AbstractFloat}
+function mean0norm1!!(vec::StaticVector{N, T}, minsqnorm::Real) where {N, T<:AbstractFloat}
     vecmean, vecnorm = vecmeannorm(vec, minsqnorm)
     if _ismutable(typeof(vec))
         @inbounds @simd for i in 1:N
