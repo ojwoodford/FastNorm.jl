@@ -26,6 +26,18 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
         @test sqnorm(randn(ComplexF64, 4, 4)) isa Float64
         @test sqnorm(reshape(1:12, 3, 4)) == sum(abs2, 1:12)
 
+        # More array cases: empty, integer, non-dense N-d, Float32 type preserved, 1-D dense
+        @test sqnorm(zeros(0, 3)) == 0.0
+        @test sqnorm([1 2; 3 4]) == 30
+        A3 = randn(Float32, 4, 5, 6)
+        @test sqnorm(A3) ≈ sum(abs2, A3)
+        @test sqnorm(view(A3, 2:3, :, 1:2:5)) ≈ sum(abs2, view(A3, 2:3, :, 1:2:5))
+        @test sqnorm(view(A3, 2:3, :, 1:2:5)) isa Float32
+        v1 = randn(37)
+        @test sqnorm(v1) ≈ sum(abs2, v1)
+        @test sqnorm(reshape(v1, 37, 1)) ≈ sum(abs2, v1)
+        @test fast_norm(A3) ≈ norm(vec(A3))
+
         # Float64 Vectors
         a64 = randn(1001)
         @test sqnorm(a64) ≈ dot(a64, a64)
@@ -336,6 +348,22 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
                 @test isapprox(a, expected_m, atol=1e-5)
             end
 
+            # 1-D PermutedDimsArray writes through to its parent
+            a = copy(base); w = PermutedDimsArray(a, (1,))
+            @test FastNorm._ismutable(typeof(w))
+            norm1!!(w)
+            @test isapprox(a, expected, atol=1e-5)
+
+            # Immutable-parent wrappers: input untouched, new normalized array returned
+            sv = SVector{16, T}(base)
+            vw = view(sv, 1:16)
+            r1 = norm1!!(vw)
+            @test r1 !== vw && isapprox(r1, expected, atol=1e-5)
+            @test vw == sv
+            r2 = mean0norm1!!(vw)
+            @test isapprox(r2, expected_m, atol=1e-5)
+            @test vw == sv
+
             # Wrappers around immutable parents are still treated as immutable
             r = T(1):T(1):T(16)
             @test !FastNorm._ismutable(typeof(reshape(r, 16)))
@@ -351,6 +379,52 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
             @test isempty(norm1!!(T[]))
             @test isempty(mean0norm1!!(SVector{0, T}()))
         end
+    end
+
+    @testset "vecmeannorm noise floor" begin
+        for T in (Float64, Float32)
+            for (val, n) in ((T(0.1), 1000), (T(123.456), 100), (T(7), 16))
+                for c in (fill(val, n), SVector{16, T}(fill(val, 16)))
+                    len = length(c)
+                    floor_inv = 1 / sqrt(len * eps(T) * sum(abs2, c))
+                    m, inv_norm = vecmeannorm(c)
+                    @test m ≈ val
+                    @test isfinite(inv_norm)
+                    # never exceeds the noise-floor bound, so normalized output stays tiny
+                    @test 0 < inv_norm <= floor_inv * T(1.001)
+                end
+            end
+            # Well above the floor, the result matches a two-pass reference
+            w = T(5) .+ randn(T, 512)
+            ref = 1 / sqrt(sum(abs2, w .- sum(w) / length(w)))
+            @test vecmeannorm(w)[2] ≈ ref rtol = 100 * sqrt(eps(T))
+            # A user minsqnorm above the floor still wins
+            @test vecmeannorm(fill(T(3), 64), T(0.25))[2] ≈ T(2)
+            # Mean is still accurate for low-contrast data
+            @test vecmeannorm(T(200) .+ T(1e-3) .* randn(T, 256))[1] ≈ T(200) rtol = 1e-4
+        end
+    end
+
+    @testset "overflow / underflow behaviour (documented safe range)" begin
+        big = [1e200, 2e200, 3e200]
+        @test sqnorm(big) == Inf
+        @test all(iszero, norm1!!(copy(big)))
+        @test vecmeannorm(big)[2] == 0.0
+        @test all(iszero, mean0norm1!!(copy(big)))
+        @test all(iszero, norm1!!(SVector{3}(big)))
+        @test sqnorm(Float32[1e20, 1e20]) == Inf32
+
+        tiny = [1e-200, 2e-200]
+        @test sqnorm(tiny) == 0.0
+        # sqnorm underflows, is clamped to minsqnorm, and the output is ~0 rather than unit norm
+        @test norm(norm1!!(copy(tiny))) < 1e-40
+
+        # Inside the documented range everything is accurate
+        edge = [1e150, 2e150, 3e150]
+        @test norm(norm1!!(copy(edge))) ≈ 1.0
+        @test norm(mean0norm1!!(copy(edge))) ≈ 1.0
+        edge32 = Float32[1e18, 2e18, 3e18]
+        @test norm(norm1!!(copy(edge32))) ≈ 1.0f0
     end
 
     @testset "integer input" begin

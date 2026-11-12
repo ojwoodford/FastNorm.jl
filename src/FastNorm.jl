@@ -1,6 +1,6 @@
 module FastNorm
 
-using LinearAlgebra, LoopVectorization, PrecompileTools, StaticArrays
+using LoopVectorization, PrecompileTools, StaticArrays
 
 export sqnorm, fast_norm, norm1!!, vecmeannorm, mean0norm1!!
 
@@ -51,7 +51,6 @@ _ismutable(::Type{V}) where V = ismutabletype(V)
 _ismutable(::Type{<:SubArray{<:Any, <:Any, P}}) where P = _ismutable(P)
 _ismutable(::Type{<:Base.ReshapedArray{<:Any, <:Any, P}}) where P = _ismutable(P)
 _ismutable(::Type{<:PermutedDimsArray{<:Any, <:Any, <:Any, <:Any, P}}) where P = _ismutable(P)
-_ismutable(::Type{<:Union{LinearAlgebra.Adjoint{<:Any, P}, LinearAlgebra.Transpose{<:Any, P}}}) where P = _ismutable(P)
 _ismutable(::Type{<:SizedArray{<:Any, <:Any, <:Any, <:Any, P}}) where P = _ismutable(P)
 
 """
