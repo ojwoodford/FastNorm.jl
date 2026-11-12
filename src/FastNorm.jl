@@ -11,6 +11,12 @@ export sqnorm, fast_norm, norm1!!, vecmeannorm, mean0norm1!!
 Computes the squared Euclidean norm (`abs2(x)` for a scalar, or `sum(abs2, arr)` for an array of any dimension).
 Real arrays use SIMD vectorization via `LoopVectorization.@turbo`; complex arrays fall back
 to `sum(abs2, arr)`.
+
+!!! warning "Safe range"
+    No overflow/underflow protection is applied. Element magnitudes should lie roughly within
+    `sqrt(floatmin(T))` and `sqrt(floatmax(T))` (about `1e-154` to `1e154` for `Float64`, `1e-19` to
+    `1e19` for `Float32`). Above this range squared sums overflow to `Inf`; below it they
+    underflow to zero and lose all precision. Use `LinearAlgebra.norm` for data that may be out of range.
 """
 @inline sqnorm(x::Number) = abs2(x)
 @inline sqnorm(arr::AbstractArray{<:Complex}) = sum(abs2, arr)
@@ -58,6 +64,12 @@ a second pass.
 For mutable vectors (such as `Vector` or views of mutable arrays), the operation is performed
 in-place and `vec` is returned. For immutable vectors (such as `StaticArrays.SVector`), a new
 normalized vector is returned.
+
+!!! warning "Safe range"
+    No overflow/underflow protection is applied. Element magnitudes should lie roughly within
+    `sqrt(floatmin(T))` and `sqrt(floatmax(T))` (about `1e-154` to `1e154` for `Float64`, `1e-19` to
+    `1e19` for `Float32`). Above this range squared sums overflow to `Inf` (so `norm1!!` returns zeros); below it they
+    underflow to zero and are clamped to `minsqnorm`. Use `LinearAlgebra.norm` for data that may be out of range.
 """
 @inline function norm1!!(vec::V, minsqnorm::Real) where {T<:AbstractFloat, V<:AbstractVector{T}}
     vecnorm = @fastmath T(1) / sqrt(max(sqnorm(vec), T(minsqnorm)))
@@ -101,6 +113,12 @@ than to noise amplified by `1 / sqrt(floatmin(T))`).
 Accuracy degrades as `std(vec) / abs(mean(vec))` approaches `sqrt(eps(T))`; for such low-contrast
 data, subtract a representative value (e.g. `vec[1]`) first or use a two-pass method.
 Returns `(vecmean, vecnorm)`. An empty vector gives `(zero(T), one(T))`.
+
+!!! warning "Safe range"
+    No overflow/underflow protection is applied. Element magnitudes should lie roughly within
+    `sqrt(floatmin(T))` and `sqrt(floatmax(T))` (about `1e-154` to `1e154` for `Float64`, `1e-19` to
+    `1e19` for `Float32`). Above this range squared sums overflow to `Inf` (so the returned normalization factor is zero); below it they
+    underflow to zero and are clamped to the noise floor. Use `LinearAlgebra.norm` for data that may be out of range.
 """
 @inline function vecmeannorm(vec::AbstractVector{T}, minsqnorm::Real) where {T<:AbstractFloat}
     isempty(vec) && return (zero(T), one(T))
@@ -142,6 +160,12 @@ scales the elements in a second pass.
 For mutable vectors (such as `Vector` or views of mutable arrays), the operation is performed
 in-place and `vec` is returned. For immutable vectors (such as `StaticArrays.SVector`), a new
 normalized vector is returned.
+
+!!! warning "Safe range"
+    No overflow/underflow protection is applied. Element magnitudes should lie roughly within
+    `sqrt(floatmin(T))` and `sqrt(floatmax(T))` (about `1e-154` to `1e154` for `Float64`, `1e-19` to
+    `1e19` for `Float32`). Above this range squared sums overflow to `Inf` (so `mean0norm1!!` returns zeros); below it they
+    underflow to zero and are clamped to the noise floor. Use `LinearAlgebra.norm` for data that may be out of range.
 """
 @inline function mean0norm1!!(vec::V, minsqnorm::Real) where {T<:AbstractFloat, V<:AbstractVector{T}}
     vecmean, vecnorm = vecmeannorm(vec, minsqnorm)
