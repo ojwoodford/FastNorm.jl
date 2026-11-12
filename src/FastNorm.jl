@@ -8,11 +8,13 @@ export sqnorm, fast_norm, norm1!!, vecmeannorm, mean0norm1!!
     sqnorm(x::Number)
     sqnorm(vec::AbstractVector)
 
-Computes the squared Euclidean norm (`x * x` for a scalar, or `sum(abs2, vec)` for a vector)
-using SIMD vectorization via `LoopVectorization.@turbo`.
+Computes the squared Euclidean norm (`abs2(x)` for a scalar, or `sum(abs2, vec)` for a vector).
+Real vectors use SIMD vectorization via `LoopVectorization.@turbo`; complex vectors fall back
+to `sum(abs2, vec)`.
 """
-@inline sqnorm(x::Number) = @fastmath x * x
-@inline function sqnorm(vec::AbstractVector)
+@inline sqnorm(x::Number) = abs2(x)
+@inline sqnorm(vec::AbstractVector{<:Complex}) = sum(abs2, vec)
+@inline function sqnorm(vec::AbstractVector{<:Real})
     total = zero(eltype(vec))
     @turbo for i in eachindex(vec)
         total += vec[i] * vec[i]
@@ -23,7 +25,7 @@ end
 @inline function sqnorm(vec::StaticVector{N, T}) where {N, T}
     s = zero(T)
     @fastmath @inbounds for i in 1:N
-        s += vec[i] * vec[i]
+        s += abs2(vec[i])
     end
     return s
 end

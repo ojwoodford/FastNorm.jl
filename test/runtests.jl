@@ -10,6 +10,13 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
         @test sqnorm(0.0) == 0.0
         @test sqnorm(0.0f0) == 0.0f0
 
+        # Complex: |x|^2, not x*x
+        @test sqnorm(1im) == 1
+        @test sqnorm(3.0 + 4.0im) == 25.0
+        @test sqnorm([1.0im, 3.0 + 4.0im]) == 26.0
+        @test fast_norm([3.0 + 4.0im]) == 5.0
+        @test sqnorm(SVector(3.0 + 4.0im, 1.0im)) == 26.0
+
         # Float64 Vectors
         a64 = randn(1001)
         @test sqnorm(a64) ≈ dot(a64, a64)
