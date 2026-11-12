@@ -306,6 +306,15 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
         end
     end
 
+    @testset "integer input" begin
+        @test sqnorm([1, 2, 3]) == 14
+        @test fast_norm([3, 4]) == 5.0
+        # Normalizing functions are float-only: a clear MethodError, not an InexactError
+        @test_throws MethodError norm1!!([1, 2, 3])
+        @test_throws MethodError vecmeannorm([1, 2, 3])
+        @test_throws MethodError mean0norm1!!([1, 2, 3])
+    end
+
     @testset "StaticVector up to length 32" begin
         for len in (2, 3, 4, 8, 16, 32)
             s = SVector{len, Float64}(randn(len)...)
