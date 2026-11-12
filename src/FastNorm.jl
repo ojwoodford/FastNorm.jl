@@ -1,6 +1,6 @@
 module FastNorm
 
-using LoopVectorization, PrecompileTools, StaticArrays
+using LinearAlgebra, LoopVectorization, PrecompileTools, StaticArrays
 
 export sqnorm, fast_norm, norm1!!, vecmeannorm, mean0norm1!!
 
@@ -38,7 +38,12 @@ Computes the Euclidean 2-norm `sqrt(sqnorm(vec))` in native SIMD Julia without c
 @inline fast_norm(vec::AbstractVector) = sqrt(sqnorm(vec))
 
 _ismutable(::Type{V}) where V = ismutabletype(V)
+# Wrappers that are immutable structs but write through to their parent
 _ismutable(::Type{<:SubArray{<:Any, <:Any, P}}) where P = _ismutable(P)
+_ismutable(::Type{<:Base.ReshapedArray{<:Any, <:Any, P}}) where P = _ismutable(P)
+_ismutable(::Type{<:PermutedDimsArray{<:Any, <:Any, <:Any, <:Any, P}}) where P = _ismutable(P)
+_ismutable(::Type{<:Union{LinearAlgebra.Adjoint{<:Any, P}, LinearAlgebra.Transpose{<:Any, P}}}) where P = _ismutable(P)
+_ismutable(::Type{<:SizedArray{<:Any, <:Any, <:Any, <:Any, P}}) where P = _ismutable(P)
 
 """
     norm1!!(vec::V, minsqnorm::Real) where {T<:AbstractFloat, V<:AbstractVector{T}}

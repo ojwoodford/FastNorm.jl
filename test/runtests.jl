@@ -306,6 +306,34 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
         end
     end
 
+    @testset "mutation through wrapper types" begin
+        for T in (Float64, Float32)
+            base = randn(T, 16)
+            expected = base ./ norm(base)
+            c = base .- sum(base) / 16
+            expected_m = c ./ norm(c)
+
+            # Immutable wrappers around mutable memory must be normalized in place
+            for wrap in (v -> reshape(v, 2, 8) |> x -> reshape(x, 16),
+                         v -> SizedVector{16}(v),
+                         v -> view(reshape(v, 16), 1:16),
+                         v -> reshape(view(v, 1:16), 16))
+                a = copy(base); w = wrap(a)
+                @test FastNorm._ismutable(typeof(w))
+                norm1!!(w)
+                @test isapprox(a, expected, atol=1e-5)
+                a = copy(base); w = wrap(a)
+                mean0norm1!!(w)
+                @test isapprox(a, expected_m, atol=1e-5)
+            end
+
+            # Wrappers around immutable parents are still treated as immutable
+            r = T(1):T(1):T(16)
+            @test !FastNorm._ismutable(typeof(reshape(r, 16)))
+            @test !FastNorm._ismutable(typeof(view(r, 1:4)))
+        end
+    end
+
     @testset "integer input" begin
         @test sqnorm([1, 2, 3]) == 14
         @test fast_norm([3, 4]) == 5.0
