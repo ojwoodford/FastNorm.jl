@@ -10,6 +10,34 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
         @test sqnorm(0.0) == 0.0
         @test sqnorm(0.0f0) == 0.0f0
 
+        # Complex: |x|^2, not x*x
+        @test sqnorm(1im) == 1
+        @test sqnorm(3.0 + 4.0im) == 25.0
+        @test sqnorm([1.0im, 3.0 + 4.0im]) == 26.0
+        @test fast_norm([3.0 + 4.0im]) == 5.0
+        @test sqnorm(SVector(3.0 + 4.0im, 1.0im)) == 26.0
+
+        # Matrices and higher-dimensional arrays
+        M = randn(7, 9)
+        @test sqnorm(M) ≈ sum(abs2, M)
+        @test sqnorm(view(M, 2:5, 3:8)) ≈ sum(abs2, view(M, 2:5, 3:8))
+        @test sqnorm(randn(Float32, 3, 4, 5)) isa Float32
+        @test fast_norm(M) ≈ norm(M)
+        @test sqnorm(randn(ComplexF64, 4, 4)) isa Float64
+        @test sqnorm(reshape(1:12, 3, 4)) == sum(abs2, 1:12)
+
+        # More array cases: empty, integer, non-dense N-d, Float32 type preserved, 1-D dense
+        @test sqnorm(zeros(0, 3)) == 0.0
+        @test sqnorm([1 2; 3 4]) == 30
+        A3 = randn(Float32, 4, 5, 6)
+        @test sqnorm(A3) ≈ sum(abs2, A3)
+        @test sqnorm(view(A3, 2:3, :, 1:2:5)) ≈ sum(abs2, view(A3, 2:3, :, 1:2:5))
+        @test sqnorm(view(A3, 2:3, :, 1:2:5)) isa Float32
+        v1 = randn(37)
+        @test sqnorm(v1) ≈ sum(abs2, v1)
+        @test sqnorm(reshape(v1, 37, 1)) ≈ sum(abs2, v1)
+        @test fast_norm(A3) ≈ norm(vec(A3))
+
         # Float64 Vectors
         a64 = randn(1001)
         @test sqnorm(a64) ≈ dot(a64, a64)
@@ -171,15 +199,32 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
             @test m_c_def ≈ T(5.0)
             @test !isnan(inv_norm_c_def) && !isinf(inv_norm_c_def)
 
-            # Custom positional minsqnorm
-            m_c, inv_norm_c = vecmeannorm(c, T(1e-8))
+            # Custom positional minsqnorm (above the relative rounding-noise floor)
+            m_c, inv_norm_c = vecmeannorm(c, T(1e-2))
             @test m_c ≈ T(5.0)
-            @test inv_norm_c ≈ T(1) / sqrt(T(1e-8))
+            @test inv_norm_c ≈ T(1) / sqrt(T(1e-2))
             @test !isnan(inv_norm_c) && !isinf(inv_norm_c)
 
             # minsqnorm as keyword argument
-            m_kw, inv_norm_kw = vecmeannorm(c; minsqnorm=1e-6)
-            @test inv_norm_kw ≈ T(1) / sqrt(T(1e-6))
+            m_kw, inv_norm_kw = vecmeannorm(c; minsqnorm=1e-1)
+            @test inv_norm_kw ≈ T(1) / sqrt(T(1e-1))
+        end
+    end
+
+    @testset "low-contrast inputs" begin
+        for T in (Float64, Float32)
+            for (val, n) in ((T(0.1), 1000), (T(123.456), 100))
+                c = fill(val, n)
+                @test maximum(abs, mean0norm1!!(copy(c))) < sqrt(eps(T))
+                @test all(isfinite, mean0norm1!!(c))
+                @test maximum(abs, mean0norm1!!(SVector{16, T}(fill(val, 16)))) < sqrt(eps(T))
+            end
+            # Near-constant: result must not blow up (norm stays O(1), not ~1e150)
+            v = T(200) .+ T(1e-3) .* randn(T, 256)
+            @test norm(mean0norm1!!(copy(v))) <= T(1.01)
+            # Well-conditioned input still normalized exactly
+            w = T(5) .+ randn(T, 256)
+            @test isapprox(norm(mean0norm1!!(copy(w))), one(T), atol=sqrt(eps(T)))
         end
     end
 
@@ -280,6 +325,115 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
             c_imm_pos = mean0norm1!!(c_imm, 1e-8)
             @test all(isapprox.(c_imm_pos, zero(T), atol=tol))
         end
+    end
+
+    @testset "mutation through wrapper types" begin
+        for T in (Float64, Float32)
+            base = randn(T, 16)
+            expected = base ./ norm(base)
+            c = base .- sum(base) / 16
+            expected_m = c ./ norm(c)
+
+            # Immutable wrappers around mutable memory must be normalized in place
+            for wrap in (v -> reshape(v, 2, 8) |> x -> reshape(x, 16),
+                         v -> SizedVector{16}(v),
+                         v -> view(reshape(v, 16), 1:16),
+                         v -> reshape(view(v, 1:16), 16))
+                a = copy(base); w = wrap(a)
+                @test FastNorm._ismutable(typeof(w))
+                norm1!!(w)
+                @test isapprox(a, expected, atol=1e-5)
+                a = copy(base); w = wrap(a)
+                mean0norm1!!(w)
+                @test isapprox(a, expected_m, atol=1e-5)
+            end
+
+            # 1-D PermutedDimsArray writes through to its parent
+            a = copy(base); w = PermutedDimsArray(a, (1,))
+            @test FastNorm._ismutable(typeof(w))
+            norm1!!(w)
+            @test isapprox(a, expected, atol=1e-5)
+
+            # Immutable-parent wrappers: input untouched, new normalized array returned
+            sv = SVector{16, T}(base)
+            vw = view(sv, 1:16)
+            r1 = norm1!!(vw)
+            @test r1 !== vw && isapprox(r1, expected, atol=1e-5)
+            @test vw == sv
+            r2 = mean0norm1!!(vw)
+            @test isapprox(r2, expected_m, atol=1e-5)
+            @test vw == sv
+
+            # Wrappers around immutable parents are still treated as immutable
+            r = T(1):T(1):T(16)
+            @test !FastNorm._ismutable(typeof(reshape(r, 16)))
+            @test !FastNorm._ismutable(typeof(view(r, 1:4)))
+        end
+    end
+
+    @testset "empty input" begin
+        for T in (Float64, Float32)
+            @test vecmeannorm(T[]) === (zero(T), one(T))
+            @test vecmeannorm(SVector{0, T}()) === (zero(T), one(T))
+            @test isempty(mean0norm1!!(T[]))
+            @test isempty(norm1!!(T[]))
+            @test isempty(mean0norm1!!(SVector{0, T}()))
+        end
+    end
+
+    @testset "vecmeannorm noise floor" begin
+        for T in (Float64, Float32)
+            for (val, n) in ((T(0.1), 1000), (T(123.456), 100), (T(7), 16))
+                for c in (fill(val, n), SVector{16, T}(fill(val, 16)))
+                    len = length(c)
+                    floor_inv = 1 / sqrt(len * eps(T) * sum(abs2, c))
+                    m, inv_norm = vecmeannorm(c)
+                    @test m ≈ val
+                    @test isfinite(inv_norm)
+                    # never exceeds the noise-floor bound, so normalized output stays tiny
+                    @test 0 < inv_norm <= floor_inv * T(1.001)
+                end
+            end
+            # Well above the floor, the result matches a two-pass reference
+            w = T(5) .+ randn(T, 512)
+            ref = 1 / sqrt(sum(abs2, w .- sum(w) / length(w)))
+            @test vecmeannorm(w)[2] ≈ ref rtol = 100 * sqrt(eps(T))
+            # A user minsqnorm above the floor still wins
+            @test vecmeannorm(fill(T(3), 64), T(0.25))[2] ≈ T(2)
+            # Mean is still accurate for low-contrast data
+            @test vecmeannorm(T(200) .+ T(1e-3) .* randn(T, 256))[1] ≈ T(200) rtol = 1e-4
+        end
+    end
+
+    @testset "overflow / underflow behaviour (documented safe range)" begin
+        big = [1e200, 2e200, 3e200]
+        @test sqnorm(big) == Inf
+        @test all(iszero, norm1!!(copy(big)))
+        @test vecmeannorm(big)[2] == 0.0
+        @test all(iszero, mean0norm1!!(copy(big)))
+        @test all(iszero, norm1!!(SVector{3}(big)))
+        @test sqnorm(Float32[1e20, 1e20]) == Inf32
+
+        tiny = [1e-200, 2e-200]
+        @test sqnorm(tiny) == 0.0
+        # sqnorm underflows, is clamped to minsqnorm, and the output is ~0 rather than unit norm
+        @test norm(norm1!!(copy(tiny))) < 1e-40
+
+        # Inside the documented range everything is accurate
+        edge = [1e150, 2e150, 3e150]
+        @test norm(norm1!!(copy(edge))) ≈ 1.0
+        @test norm(mean0norm1!!(copy(edge))) ≈ 1.0
+        edge32 = Float32[1e18, 2e18, 3e18]
+        @test norm(norm1!!(copy(edge32))) ≈ 1.0f0
+    end
+
+    @testset "integer input" begin
+        @test sqnorm([1, 2, 3]) == 14
+        @test fast_norm([3, 4]) == 5.0
+        # Normalizing functions are float-only: a clear MethodError, not an InexactError
+        @test_throws MethodError norm1!!([1, 2, 3])
+        @test_throws MethodError vecmeannorm([1, 2, 3])
+        @test_throws MethodError mean0norm1!!([1, 2, 3])
     end
 
     @testset "StaticVector up to length 32" begin

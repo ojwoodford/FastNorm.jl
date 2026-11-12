@@ -21,7 +21,7 @@ Standard Julia linear algebra is built around standard BLAS and LAPACK libraries
 4. **Single-Pass Mean and Normalizer (`vecmeannorm`)**:
    Standard calculations of the mean $\bar{x}$ and norm of deviations $\sqrt{\sum_i (x_i - \bar{x})^2}$ require two sequential memory passes over the vector: pass 1 computes the mean, and pass 2 computes the squared differences from the mean. `vecmeannorm` computes both the mean and the normalization factor in a **single pass** using the algebraic identity:
    $$\sum_{i=1}^N (x_i - \bar{x})^2 = \sum_{i=1}^N x_i^2 - \bar{x} \sum_{i=1}^N x_i$$
-   Clamping with the default minimum normalization constant `floatmin(T)` protects against division by zero or NaN results when variance is zero. Halving the memory traffic and leveraging SIMD vectorization yields **up to 3.3x speedups**.
+   The squared norm is floored at the larger of `minsqnorm` (default `floatmin(T)`) and a rounding-noise level (`length * eps(T) * sum(x.^2)`), which protects against division by zero, NaNs, and noise amplification for constant or near-constant vectors. Accuracy degrades as `std/|mean|` approaches `sqrt(eps(T))`. Halving the memory traffic and leveraging SIMD vectorization yields **up to 3.3x speedups**.
 
 5. **Two-Pass In-Place Zero-Mean Unit-Norm Normalization (`mean0norm1!!`)**:
    Normalizing a vector to have zero mean and unit Euclidean norm ($\mu = 0$, $\|v\|_2 = 1$) conventionally requires 4 memory passes:
