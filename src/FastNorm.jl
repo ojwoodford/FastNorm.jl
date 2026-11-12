@@ -6,14 +6,14 @@ export sqnorm, fast_norm, norm1!!, vecmeannorm, mean0norm1!!
 
 """
     sqnorm(x::Number)
-    sqnorm(vec::AbstractVector)
+    sqnorm(arr::AbstractArray)
 
-Computes the squared Euclidean norm (`abs2(x)` for a scalar, or `sum(abs2, vec)` for a vector).
-Real vectors use SIMD vectorization via `LoopVectorization.@turbo`; complex vectors fall back
-to `sum(abs2, vec)`.
+Computes the squared Euclidean norm (`abs2(x)` for a scalar, or `sum(abs2, arr)` for an array of any dimension).
+Real arrays use SIMD vectorization via `LoopVectorization.@turbo`; complex arrays fall back
+to `sum(abs2, arr)`.
 """
 @inline sqnorm(x::Number) = abs2(x)
-@inline sqnorm(vec::AbstractVector{<:Complex}) = sum(abs2, vec)
+@inline sqnorm(arr::AbstractArray{<:Complex}) = sum(abs2, arr)
 @inline function sqnorm(vec::AbstractVector{<:Real})
     total = zero(eltype(vec))
     @turbo for i in eachindex(vec)
@@ -21,6 +21,9 @@ to `sum(abs2, vec)`.
     end
     return total
 end
+# Matrices and higher-dimensional arrays: dense (contiguous) arrays are reduced as a flat vector
+@inline sqnorm(arr::DenseArray{<:Real, N}) where N = N == 1 ? invoke(sqnorm, Tuple{AbstractVector{<:Real}}, arr) : sqnorm(vec(arr))
+@inline sqnorm(arr::AbstractArray{<:Real}) = sum(abs2, arr)
 
 @inline function sqnorm(vec::StaticVector{N, T}) where {N, T}
     s = zero(T)
@@ -31,11 +34,11 @@ end
 end
 
 """
-    fast_norm(vec::AbstractVector)
+    fast_norm(arr::AbstractArray)
 
-Computes the Euclidean 2-norm `sqrt(sqnorm(vec))` in native SIMD Julia without calling multi-threaded BLAS.
+Computes the Euclidean (Frobenius, for matrices) 2-norm `sqrt(sqnorm(arr))` in native SIMD Julia without calling multi-threaded BLAS.
 """
-@inline fast_norm(vec::AbstractVector) = sqrt(sqnorm(vec))
+@inline fast_norm(arr::AbstractArray) = sqrt(sqnorm(arr))
 
 _ismutable(::Type{V}) where V = ismutabletype(V)
 # Wrappers that are immutable structs but write through to their parent

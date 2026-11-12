@@ -17,6 +17,15 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
         @test fast_norm([3.0 + 4.0im]) == 5.0
         @test sqnorm(SVector(3.0 + 4.0im, 1.0im)) == 26.0
 
+        # Matrices and higher-dimensional arrays
+        M = randn(7, 9)
+        @test sqnorm(M) ≈ sum(abs2, M)
+        @test sqnorm(view(M, 2:5, 3:8)) ≈ sum(abs2, view(M, 2:5, 3:8))
+        @test sqnorm(randn(Float32, 3, 4, 5)) isa Float32
+        @test fast_norm(M) ≈ norm(M)
+        @test sqnorm(randn(ComplexF64, 4, 4)) isa Float64
+        @test sqnorm(reshape(1:12, 3, 4)) == sum(abs2, 1:12)
+
         # Float64 Vectors
         a64 = randn(1001)
         @test sqnorm(a64) ≈ dot(a64, a64)
