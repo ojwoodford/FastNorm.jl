@@ -171,15 +171,32 @@ using FastNorm, LinearAlgebra, StaticArrays, Test
             @test m_c_def ≈ T(5.0)
             @test !isnan(inv_norm_c_def) && !isinf(inv_norm_c_def)
 
-            # Custom positional minsqnorm
-            m_c, inv_norm_c = vecmeannorm(c, T(1e-8))
+            # Custom positional minsqnorm (above the relative rounding-noise floor)
+            m_c, inv_norm_c = vecmeannorm(c, T(1e-2))
             @test m_c ≈ T(5.0)
-            @test inv_norm_c ≈ T(1) / sqrt(T(1e-8))
+            @test inv_norm_c ≈ T(1) / sqrt(T(1e-2))
             @test !isnan(inv_norm_c) && !isinf(inv_norm_c)
 
             # minsqnorm as keyword argument
-            m_kw, inv_norm_kw = vecmeannorm(c; minsqnorm=1e-6)
-            @test inv_norm_kw ≈ T(1) / sqrt(T(1e-6))
+            m_kw, inv_norm_kw = vecmeannorm(c; minsqnorm=1e-1)
+            @test inv_norm_kw ≈ T(1) / sqrt(T(1e-1))
+        end
+    end
+
+    @testset "low-contrast inputs" begin
+        for T in (Float64, Float32)
+            for (val, n) in ((T(0.1), 1000), (T(123.456), 100))
+                c = fill(val, n)
+                @test maximum(abs, mean0norm1!!(copy(c))) < sqrt(eps(T))
+                @test all(isfinite, mean0norm1!!(c))
+                @test maximum(abs, mean0norm1!!(SVector{16, T}(fill(val, 16)))) < sqrt(eps(T))
+            end
+            # Near-constant: result must not blow up (norm stays O(1), not ~1e150)
+            v = T(200) .+ T(1e-3) .* randn(T, 256)
+            @test norm(mean0norm1!!(copy(v))) <= T(1.01)
+            # Well-conditioned input still normalized exactly
+            w = T(5) .+ randn(T, 256)
+            @test isapprox(norm(mean0norm1!!(copy(w))), one(T), atol=sqrt(eps(T)))
         end
     end
 

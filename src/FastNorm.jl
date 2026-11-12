@@ -84,7 +84,12 @@ Uses the algebraic identity:
     sum((x_i - mean)^2) = sum(x_i^2) - mean * sum(x_i)
 which requires only one memory pass over `vec`, trading a small amount of numerical accuracy
 under extreme cancellation for reduced memory traffic and execution speed.
-Clamps the squared norm to `minsqnorm` to prevent division by zero or negative square roots.
+The squared norm is floored at `max(minsqnorm, length(vec) * eps(T) * sum(vec .^ 2))`, i.e. at the
+level of rounding noise in the identity above, which prevents division by zero, negative square
+roots, and garbage output for constant or near-constant vectors (these normalize to ~zero rather
+than to noise amplified by `1 / sqrt(floatmin(T))`).
+Accuracy degrades as `std(vec) / abs(mean(vec))` approaches `sqrt(eps(T))`; for such low-contrast
+data, subtract a representative value (e.g. `vec[1]`) first or use a two-pass method.
 Returns `(vecmean, vecnorm)`.
 """
 @inline function vecmeannorm(vec::AbstractVector{T}, minsqnorm::Real) where T
@@ -96,7 +101,7 @@ Returns `(vecmean, vecnorm)`.
         xx += v * v
     end
     vecmean = x / length(vec)
-    vecnorm = @fastmath T(1) / sqrt(max(xx - vecmean * x, T(minsqnorm)))
+    vecnorm = @fastmath T(1) / sqrt(max(xx - vecmean * x, T(minsqnorm), length(vec) * eps(T) * xx))
     return (vecmean, vecnorm)
 end
 @inline vecmeannorm(vec::AbstractVector{T}; minsqnorm::Real=floatmin(T)) where T = vecmeannorm(vec, minsqnorm)
@@ -110,7 +115,7 @@ end
         xx += v * v
     end
     vecmean = x / N
-    vecnorm = @fastmath T(1) / sqrt(max(xx - vecmean * x, T(minsqnorm)))
+    vecnorm = @fastmath T(1) / sqrt(max(xx - vecmean * x, T(minsqnorm), N * eps(T) * xx))
     return (vecmean, vecnorm)
 end
 @inline vecmeannorm(vec::StaticVector{N, T}; minsqnorm::Real=floatmin(T)) where {N, T} = vecmeannorm(vec, minsqnorm)
